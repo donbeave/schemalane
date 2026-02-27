@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shellfirm": {
+      "command": "shellfirm",
+      "args": ["mcp"]
+    }
+  }
+}
