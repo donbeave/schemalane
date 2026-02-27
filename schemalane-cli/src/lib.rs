@@ -5,7 +5,11 @@ use schemalane::{
 };
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const DEFAULT_MIGRATION_DIR: &str = "./migration";
+const DEFAULT_SQL_DIR: &str = "./migrations";
 
 pub struct EmbeddedRunner {
     migrations_dir: &'static str,
@@ -87,14 +91,25 @@ enum RootCommand {
 
 #[derive(Debug, Args)]
 struct MigrateArgs {
+    /// Migration script directory.
+    ///
+    /// If your migrations are in their own crate,
+    /// provide the root of that crate.
+    /// If your migrations are in a submodule of your app,
+    /// provide the directory of that submodule.
+    #[arg(
+        short = 'd',
+        long = "migration-dir",
+        env = "MIGRATION_DIR",
+        default_value = DEFAULT_MIGRATION_DIR
+    )]
+    migration_dir: PathBuf,
+
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
     #[arg(long, default_value = "public")]
     schema: String,
-
-    #[arg(long, default_value = "./migrations")]
-    dir: PathBuf,
 
     #[arg(long, default_value = "flyway_schema_history")]
     history_table: String,
@@ -103,7 +118,7 @@ struct MigrateArgs {
     installed_by: Option<String>,
 
     #[command(subcommand)]
-    command: MigrateCommand,
+    command: Option<MigrateCommand>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -202,13 +217,14 @@ impl From<EmbeddedCommand> for DbCommand {
 async fn run_root_cli(cli: Cli) -> Result<(), SchemalaneError> {
     let RootCommand::Migrate(args) = cli.command;
     let MigrateArgs {
+        migration_dir,
         database_url,
         schema,
-        dir,
         history_table,
         installed_by,
         command,
     } = args;
+    let command = command.unwrap_or(MigrateCommand::Up);
 
     match command {
         MigrateCommand::Init { path, force } => {
@@ -227,6 +243,24 @@ async fn run_root_cli(cli: Cli) -> Result<(), SchemalaneError> {
             Ok(())
         }
         command => {
+            let manifest_path = migration_dir.join("Cargo.toml");
+            if manifest_path.is_file() {
+                return run_via_migration_crate(
+                    &manifest_path,
+                    database_url.as_deref(),
+                    &schema,
+                    &history_table,
+                    installed_by.as_deref(),
+                    command,
+                );
+            }
+            if migration_dir != PathBuf::from(DEFAULT_MIGRATION_DIR) {
+                return Err(SchemalaneError::Validation(format!(
+                    "migration crate manifest not found: {}",
+                    manifest_path.display()
+                )));
+            }
+
             let database_url = database_url.ok_or_else(|| {
                 SchemalaneError::Validation(
                     "--database-url (or DATABASE_URL env var) is required for this command"
@@ -239,7 +273,7 @@ async fn run_root_cli(cli: Cli) -> Result<(), SchemalaneError> {
             let config = SchemalaneConfig {
                 schema,
                 history_table,
-                migrations_dir: dir,
+                migrations_dir: PathBuf::from(DEFAULT_SQL_DIR),
                 installed_by,
                 ..Default::default()
             };
@@ -261,6 +295,78 @@ async fn run_root_cli(cli: Cli) -> Result<(), SchemalaneError> {
 
             run_db_command(&migrator, &db, db_command).await
         }
+    }
+}
+
+fn run_via_migration_crate(
+    manifest_path: &Path,
+    database_url: Option<&str>,
+    schema: &str,
+    history_table: &str,
+    installed_by: Option<&str>,
+    command: MigrateCommand,
+) -> Result<(), SchemalaneError> {
+    let mut cargo = Command::new("cargo");
+    cargo
+        .arg("run")
+        .arg("--manifest-path")
+        .arg(manifest_path)
+        .arg("--");
+
+    if let Some(database_url) = database_url {
+        cargo.arg("--database-url").arg(database_url);
+    }
+
+    cargo
+        .arg("--schema")
+        .arg(schema)
+        .arg("--history-table")
+        .arg(history_table);
+
+    if let Some(installed_by) = installed_by {
+        cargo.arg("--installed-by").arg(installed_by);
+    }
+
+    match command {
+        MigrateCommand::Init { .. } => unreachable!("init is handled in outer match"),
+        MigrateCommand::Up => {
+            cargo.arg("up");
+        }
+        MigrateCommand::Status {
+            format,
+            fail_on_pending,
+        } => {
+            cargo.arg("status");
+            cargo.arg("--format").arg(match format {
+                StatusFormat::Table => "table",
+                StatusFormat::Json => "json",
+            });
+            if fail_on_pending {
+                cargo.arg("--fail-on-pending");
+            }
+        }
+        MigrateCommand::Fresh { yes } => {
+            cargo.arg("fresh");
+            if yes {
+                cargo.arg("--yes");
+            }
+        }
+    }
+
+    let status = cargo.status().map_err(|err| {
+        SchemalaneError::Validation(format!(
+            "failed to run cargo for migration crate {}: {err}",
+            manifest_path.display()
+        ))
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(SchemalaneError::Validation(format!(
+            "migration crate command failed for {} with status {status}",
+            manifest_path.display()
+        )))
     }
 }
 
@@ -327,4 +433,37 @@ async fn run_db_command(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, DEFAULT_MIGRATION_DIR, MigrateCommand, RootCommand};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parse_short_migration_dir_flag() {
+        let cli = Cli::try_parse_from(["schemalane", "migrate", "-d", "test2/migration", "up"])
+            .expect("CLI args should parse");
+        let RootCommand::Migrate(args) = cli.command;
+        assert_eq!(args.migration_dir, PathBuf::from("test2/migration"));
+        assert!(matches!(args.command, Some(MigrateCommand::Up)));
+    }
+
+    #[test]
+    fn parse_default_migration_dir() {
+        let cli = Cli::try_parse_from(["schemalane", "migrate", "status"])
+            .expect("CLI args should parse");
+        let RootCommand::Migrate(args) = cli.command;
+        assert_eq!(args.migration_dir, PathBuf::from(DEFAULT_MIGRATION_DIR));
+        assert!(matches!(args.command, Some(MigrateCommand::Status { .. })));
+    }
+
+    #[test]
+    fn parse_migrate_without_subcommand() {
+        let cli = Cli::try_parse_from(["schemalane", "migrate"]).expect("CLI args should parse");
+        let RootCommand::Migrate(args) = cli.command;
+        assert_eq!(args.migration_dir, PathBuf::from(DEFAULT_MIGRATION_DIR));
+        assert!(args.command.is_none(), "no subcommand means implicit up");
+    }
 }

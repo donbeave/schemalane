@@ -43,15 +43,21 @@ cargo run --manifest-path ./migration/Cargo.toml -- --database-url "$DATABASE_UR
 ## Direct CLI Usage
 
 ```sh
-cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations up
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" up
+```
+
+Use a migration crate path (SeaORM-style):
+
+```sh
+cargo run -p schemalane-cli -- migrate -d ./migration up
 ```
 
 ```sh
-cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations status
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" status
 ```
 
 ```sh
-cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations fresh --yes
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" fresh --yes
 ```
 
 ## Notes

@@ -39,9 +39,9 @@ Schemalane CLI namespace:
 
 ### 2.1 Common Flags (`up`, `status`, `fresh`)
 
+- `-d, --migration-dir <path>` (env: `MIGRATION_DIR`, default: `./migration`)
 - `--database-url <postgres://...>`
 - `--schema <schema_name>` (default: `public`)
-- `--dir <path>` (default: `./migrations`)
 - `--history-table <name>` (default: `flyway_schema_history`)
 - `--installed-by <name>` (default: current DB user)
 
@@ -55,6 +55,9 @@ Schemalane CLI namespace:
   - `--fail-on-pending`
 - `schemalane migrate fresh`
   - `--yes` (required)
+
+When `--migration-dir` points to a migration crate with `Cargo.toml`, CLI execution delegates to:
+`cargo run --manifest-path <migration_dir>/Cargo.toml -- ...` (SeaORM-style).
 
 ### 2.3 `init` Scaffold Output
 
