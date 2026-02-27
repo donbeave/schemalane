@@ -2612,17 +2612,26 @@ dependencies = [
 name = "schemalane"
 version = "0.1.0"
 dependencies = [
- "clap",
  "crc32fast",
  "regex",
  "schemalane-macros",
  "sea-orm",
  "sea-orm-migration",
  "serde",
- "serde_json",
  "tempfile",
  "testcontainers-modules",
  "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "schemalane-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "schemalane",
+ "sea-orm",
+ "serde_json",
  "tokio",
 ]
 

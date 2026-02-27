@@ -1,4 +1,3 @@
-use clap::{Parser, Subcommand, ValueEnum};
 use crc32fast::Hasher;
 use regex::Regex;
 use sea_orm::sqlx;
@@ -8,7 +7,6 @@ use sea_orm::{
 use sea_orm_migration::SchemaManager;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
-use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -199,157 +197,6 @@ pub fn init_migration_project(path: &Path, force: bool) -> Result<InitReport, Sc
         created,
         overwritten,
     })
-}
-
-pub struct EmbeddedRunner {
-    migrations_dir: &'static str,
-    build_migrator: fn(SchemalaneConfig) -> SchemalaneMigrator,
-}
-
-impl EmbeddedRunner {
-    pub fn new(
-        migrations_dir: &'static str,
-        build_migrator: fn(SchemalaneConfig) -> SchemalaneMigrator,
-    ) -> Self {
-        Self {
-            migrations_dir,
-            build_migrator,
-        }
-    }
-
-    pub async fn run(self) {
-        if let Err(err) = self.run_with(std::env::args_os()).await {
-            eprintln!("{err}");
-            std::process::exit(err.exit_code());
-        }
-    }
-
-    pub async fn run_with<I, T>(self, args: I) -> Result<(), SchemalaneError>
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<OsString> + Clone,
-    {
-        let cli = EmbeddedCli::parse_from(args);
-
-        let mut connect_opts = sea_orm::ConnectOptions::new(cli.database_url.clone());
-        connect_opts.max_connections(5);
-        connect_opts.min_connections(1);
-        let db = sea_orm::Database::connect(connect_opts).await?;
-
-        let migrations_dir = cli
-            .dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(self.migrations_dir));
-
-        let config = SchemalaneConfig {
-            schema: cli.schema,
-            history_table: cli.history_table,
-            migrations_dir,
-            installed_by: cli.installed_by,
-            ..Default::default()
-        };
-
-        let migrator = (self.build_migrator)(config);
-
-        match cli.command {
-            EmbeddedCommand::Up => {
-                let report = migrator.up(&db).await?;
-                println!(
-                    "Applied {} migration(s), skipped {}.",
-                    report.applied.len(),
-                    report.skipped
-                );
-                for applied in report.applied {
-                    println!(
-                        "- V{} {} ({}) [{} ms]",
-                        applied.version,
-                        applied.description,
-                        applied.script,
-                        applied.execution_time_ms
-                    );
-                }
-            }
-            EmbeddedCommand::Status {
-                format,
-                fail_on_pending,
-            } => {
-                let report = migrator.status(&db).await?;
-                match format {
-                    EmbeddedStatusFormat::Table => println!("{}", format_status_table(&report)),
-                    EmbeddedStatusFormat::Json => println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).map_err(|err| {
-                            SchemalaneError::Validation(format!("failed to encode JSON: {err}"))
-                        })?
-                    ),
-                }
-                if fail_on_pending {
-                    should_fail_on_pending(&report)?;
-                }
-            }
-            EmbeddedCommand::Fresh { yes } => {
-                let report = migrator.fresh(&db, yes).await?;
-                println!(
-                    "Fresh completed. Applied {} migration(s).",
-                    report.applied.len()
-                );
-                for applied in report.applied {
-                    println!(
-                        "- V{} {} ({}) [{} ms]",
-                        applied.version,
-                        applied.description,
-                        applied.script,
-                        applied.execution_time_ms
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Parser)]
-struct EmbeddedCli {
-    #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
-
-    #[arg(long, default_value = "public")]
-    schema: String,
-
-    #[arg(long, default_value = "flyway_schema_history")]
-    history_table: String,
-
-    #[arg(long)]
-    installed_by: Option<String>,
-
-    #[arg(long)]
-    dir: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: EmbeddedCommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum EmbeddedCommand {
-    Up,
-    Status {
-        #[arg(long, value_enum, default_value_t = EmbeddedStatusFormat::Table)]
-        format: EmbeddedStatusFormat,
-
-        #[arg(long)]
-        fail_on_pending: bool,
-    },
-    Fresh {
-        #[arg(long)]
-        yes: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum EmbeddedStatusFormat {
-    Table,
-    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1386,10 +1233,12 @@ publish = false
 
 [dependencies]
 schemalane = "0.1"
+schemalane-cli = "0.1"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
 
 # If schemalane is not published yet, replace the line above with:
 # schemalane = { path = "../schemalane" }
+# schemalane-cli = { path = "../schemalane-cli" }
 
 [dependencies.sea-orm]
 version = "2.0.0-rc.34"

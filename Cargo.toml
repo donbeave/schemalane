@@ -1,7 +1,11 @@
 [workspace]
 members = [
     "schemalane",
+    "schemalane-cli",
     "schemalane-macros",
 ]
-default-members = ["schemalane"]
+default-members = [
+    "schemalane",
+    "schemalane-cli",
+]
 resolver = "2"

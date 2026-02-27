@@ -5,7 +5,8 @@ PostgreSQL-first, forward-only migrations with SQL as default and optional Rust 
 Repository layout:
 
 - Cargo workspace root
-- CLI/library crate: `schemalane`
+- library crate: `schemalane`
+- CLI crate: `schemalane-cli`
 - proc-macro crate: `schemalane-macros`
 
 ## Commands
@@ -22,7 +23,7 @@ Schemalane CLI supports:
 Generate a migration crate (SeaORM-style):
 
 ```sh
-cargo run -p schemalane -- migrate init --path ./migration
+cargo run -p schemalane-cli -- migrate init --path ./migration
 ```
 
 This creates:
@@ -42,15 +43,15 @@ cargo run --manifest-path ./migration/Cargo.toml -- --database-url "$DATABASE_UR
 ## Direct CLI Usage
 
 ```sh
-cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations up
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations up
 ```
 
 ```sh
-cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations status
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations status
 ```
 
 ```sh
-cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations fresh --yes
+cargo run -p schemalane-cli -- migrate --database-url "$DATABASE_URL" --dir ./migrations fresh --yes
 ```
 
 ## Notes
@@ -60,4 +61,4 @@ cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrat
 - SQL runs in a transaction by default.
 - Rust migration transaction mode is controlled by executor registration.
 - `src/lib.rs` uses `embed_migrations!("./migrations")` to auto-register Rust migration files by script name.
-- generated `src/main.rs` is minimal and uses shared CLI via `embedded::migrations::runner().run().await`.
+- generated `src/main.rs` is minimal and uses shared CLI via `embedded::migrations::runner().run().await` (backed by `schemalane-cli`).

@@ -12,7 +12,7 @@ Schemalane v1 is a PostgreSQL-only, forward-only migration toolkit with a Flyway
 - Usage modes:
   - As a Rust crate
   - As an embedded tool in application binaries
-  - As a CLI
+  - As a CLI (via `schemalane-cli` crate)
   - As a programmatic migrator API
 - Commands:
   - `init`
@@ -71,7 +71,7 @@ Embedded mode uses macro-based registration:
 
 - `embed_migrations!("<dir>")` scans Rust migration files at compile time
 - generates `migrations::build_migrator(config)` and `migrations::MIGRATIONS_DIR`
-- generates `migrations::runner()` for shared embedded CLI execution
+- generates `migrations::runner()` for shared embedded CLI execution via `schemalane-cli`
 - avoids manual migration module lists in `src/lib.rs`
 
 ## 3. Migration Discovery and Parsing

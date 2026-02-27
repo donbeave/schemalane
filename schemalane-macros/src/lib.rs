@@ -89,8 +89,8 @@ pub fn embed_migrations(input: TokenStream) -> TokenStream {
                 migrator
             }
 
-            pub fn runner() -> ::schemalane::EmbeddedRunner {
-                ::schemalane::EmbeddedRunner::new(MIGRATIONS_DIR, build_migrator)
+            pub fn runner() -> ::schemalane_cli::EmbeddedRunner {
+                ::schemalane_cli::EmbeddedRunner::new(MIGRATIONS_DIR, build_migrator)
             }
         }
     }
