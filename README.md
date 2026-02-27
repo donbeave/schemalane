@@ -2,6 +2,12 @@
 
 PostgreSQL-first, forward-only migrations with SQL as default and optional Rust migrations.
 
+Repository layout:
+
+- Cargo workspace root
+- CLI/library crate: `schemalane`
+- proc-macro crate: `schemalane-macros`
+
 ## Commands
 
 Schemalane CLI supports:
@@ -16,7 +22,7 @@ Schemalane CLI supports:
 Generate a migration crate (SeaORM-style):
 
 ```sh
-schemalane migrate init --path ./migration
+cargo run -p schemalane -- migrate init --path ./migration
 ```
 
 This creates:
@@ -27,8 +33,6 @@ This creates:
 - `migration/migrations/V1__create_cake_table.sql`
 - `migration/migrations/V2__seed_cake_table.rs`
 
-This repository also includes a ready-to-run example at `./examples/migration`.
-
 Run it from your parent project:
 
 ```sh
@@ -38,15 +42,15 @@ cargo run --manifest-path ./migration/Cargo.toml -- --database-url "$DATABASE_UR
 ## Direct CLI Usage
 
 ```sh
-schemalane migrate --database-url "$DATABASE_URL" --dir ./migrations up
+cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations up
 ```
 
 ```sh
-schemalane migrate --database-url "$DATABASE_URL" --dir ./migrations status
+cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations status
 ```
 
 ```sh
-schemalane migrate --database-url "$DATABASE_URL" --dir ./migrations fresh --yes
+cargo run -p schemalane -- migrate --database-url "$DATABASE_URL" --dir ./migrations fresh --yes
 ```
 
 ## Notes
