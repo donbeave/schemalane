@@ -15,6 +15,7 @@ Schemalane v1 is a PostgreSQL-only, forward-only migration toolkit with a Flyway
   - As a CLI
   - As a programmatic migrator API
 - Commands:
+  - `init`
   - `up`
   - `status`
   - `fresh`
@@ -31,11 +32,12 @@ Schemalane v1 is a PostgreSQL-only, forward-only migration toolkit with a Flyway
 
 Schemalane CLI namespace:
 
+- `schemalane migrate init`
 - `schemalane migrate up`
 - `schemalane migrate status`
 - `schemalane migrate fresh`
 
-### 2.1 Common Flags
+### 2.1 Common Flags (`up`, `status`, `fresh`)
 
 - `--database-url <postgres://...>`
 - `--schema <schema_name>` (default: `public`)
@@ -45,11 +47,32 @@ Schemalane CLI namespace:
 
 ### 2.2 Command-Specific Flags
 
+- `schemalane migrate init`
+  - `--path <path>` (default: `./migration`)
+  - `--force` (overwrite existing scaffold files)
 - `schemalane migrate status`
   - `--format table|json` (default: `table`)
   - `--fail-on-pending`
 - `schemalane migrate fresh`
   - `--yes` (required)
+
+### 2.3 `init` Scaffold Output
+
+`schemalane migrate init` creates a standalone migration crate with:
+
+- a runnable CLI (`src/main.rs`)
+- a reusable migrator builder (`src/lib.rs`)
+- SQL and Rust sample migrations in one folder (`./migrations`)
+- `embed_migrations!("./migrations")` in `src/lib.rs` for auto Rust migration detection
+
+### 2.4 Embedded Registration
+
+Embedded mode uses macro-based registration:
+
+- `embed_migrations!("<dir>")` scans Rust migration files at compile time
+- generates `migrations::build_migrator(config)` and `migrations::MIGRATIONS_DIR`
+- generates `migrations::runner()` for shared embedded CLI execution
+- avoids manual migration module lists in `src/lib.rs`
 
 ## 3. Migration Discovery and Parsing
 
@@ -221,6 +244,7 @@ Execution sequence:
 
 Minimum API surface (crate mode):
 
+- `init_migration_project(&Path, force: bool) -> Result<InitReport, Error>`
 - `Migrator::up(&DatabaseConnection, &Config) -> Result<RunReport, Error>`
 - `Migrator::status(&DatabaseConnection, &Config) -> Result<StatusReport, Error>`
 - `Migrator::fresh(&DatabaseConnection, &Config) -> Result<RunReport, Error>`

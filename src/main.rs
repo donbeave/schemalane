@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use schemalane::{
     SchemalaneConfig, SchemalaneError, SchemalaneMigrator, format_status_table,
-    should_fail_on_pending,
+    init_migration_project, should_fail_on_pending,
 };
 use sea_orm::{ConnectOptions, Database};
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ enum RootCommand {
 #[derive(Debug, Args)]
 struct MigrateArgs {
     #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
+    database_url: Option<String>,
 
     #[arg(long, default_value = "public")]
     schema: String,
@@ -42,6 +42,13 @@ struct MigrateArgs {
 
 #[derive(Debug, Subcommand)]
 enum MigrateCommand {
+    Init {
+        #[arg(long, default_value = "./migration")]
+        path: PathBuf,
+
+        #[arg(long)]
+        force: bool,
+    },
     Up,
     Status {
         #[arg(long, value_enum, default_value_t = StatusFormat::Table)]
@@ -74,70 +81,113 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<(), SchemalaneError> {
     let RootCommand::Migrate(args) = cli.command;
+    let MigrateArgs {
+        database_url,
+        schema,
+        dir,
+        history_table,
+        installed_by,
+        command,
+    } = args;
 
-    let mut connect_opts = ConnectOptions::new(args.database_url.clone());
-    connect_opts.max_connections(5);
-    connect_opts.min_connections(1);
-
-    let db = Database::connect(connect_opts).await?;
-
-    let config = SchemalaneConfig {
-        schema: args.schema,
-        history_table: args.history_table,
-        migrations_dir: args.dir,
-        installed_by: args.installed_by,
-        ..Default::default()
-    };
-
-    let migrator = SchemalaneMigrator::new(config);
-
-    match args.command {
-        MigrateCommand::Up => {
-            let report = migrator.up(&db).await?;
+    match command {
+        MigrateCommand::Init { path, force } => {
+            let report = init_migration_project(&path, force)?;
+            println!("Initialized migration crate at {}", report.root.display());
             println!(
-                "Applied {} migration(s), skipped {}.",
-                report.applied.len(),
-                report.skipped
+                "Created {} file(s), overwritten {} file(s).",
+                report.created.len(),
+                report.overwritten.len()
             );
-            for applied in report.applied {
-                println!(
-                    "- V{} {} ({}) [{} ms]",
-                    applied.version, applied.description, applied.script, applied.execution_time_ms
-                );
-            }
-        }
-        MigrateCommand::Status {
-            format,
-            fail_on_pending,
-        } => {
-            let report = migrator.status(&db).await?;
-            match format {
-                StatusFormat::Table => println!("{}", format_status_table(&report)),
-                StatusFormat::Json => println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(|err| {
-                        SchemalaneError::Validation(format!("failed to encode JSON: {err}"))
-                    })?
-                ),
-            }
-            if fail_on_pending {
-                should_fail_on_pending(&report)?;
-            }
-        }
-        MigrateCommand::Fresh { yes } => {
-            let report = migrator.fresh(&db, yes).await?;
+            println!("Run migrations via:");
             println!(
-                "Fresh completed. Applied {} migration(s).",
-                report.applied.len()
+                "cargo run --manifest-path {}/Cargo.toml -- --database-url \"$DATABASE_URL\" up",
+                report.root.display()
             );
-            for applied in report.applied {
-                println!(
-                    "- V{} {} ({}) [{} ms]",
-                    applied.version, applied.description, applied.script, applied.execution_time_ms
-                );
+            Ok(())
+        }
+        command => {
+            let database_url = database_url.ok_or_else(|| {
+                SchemalaneError::Validation(
+                    "--database-url (or DATABASE_URL env var) is required for this command"
+                        .to_owned(),
+                )
+            })?;
+
+            let mut connect_opts = ConnectOptions::new(database_url);
+            connect_opts.max_connections(5);
+            connect_opts.min_connections(1);
+
+            let db = Database::connect(connect_opts).await?;
+
+            let config = SchemalaneConfig {
+                schema,
+                history_table,
+                migrations_dir: dir,
+                installed_by,
+                ..Default::default()
+            };
+
+            let migrator = SchemalaneMigrator::new(config);
+
+            match command {
+                MigrateCommand::Init { .. } => {
+                    unreachable!("init is handled in the outer match branch")
+                }
+                MigrateCommand::Up => {
+                    let report = migrator.up(&db).await?;
+                    println!(
+                        "Applied {} migration(s), skipped {}.",
+                        report.applied.len(),
+                        report.skipped
+                    );
+                    for applied in report.applied {
+                        println!(
+                            "- V{} {} ({}) [{} ms]",
+                            applied.version,
+                            applied.description,
+                            applied.script,
+                            applied.execution_time_ms
+                        );
+                    }
+                }
+                MigrateCommand::Status {
+                    format,
+                    fail_on_pending,
+                } => {
+                    let report = migrator.status(&db).await?;
+                    match format {
+                        StatusFormat::Table => println!("{}", format_status_table(&report)),
+                        StatusFormat::Json => println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).map_err(|err| {
+                                SchemalaneError::Validation(format!("failed to encode JSON: {err}"))
+                            })?
+                        ),
+                    }
+                    if fail_on_pending {
+                        should_fail_on_pending(&report)?;
+                    }
+                }
+                MigrateCommand::Fresh { yes } => {
+                    let report = migrator.fresh(&db, yes).await?;
+                    println!(
+                        "Fresh completed. Applied {} migration(s).",
+                        report.applied.len()
+                    );
+                    for applied in report.applied {
+                        println!(
+                            "- V{} {} ({}) [{} ms]",
+                            applied.version,
+                            applied.description,
+                            applied.script,
+                            applied.execution_time_ms
+                        );
+                    }
+                }
             }
+
+            Ok(())
         }
     }
-
-    Ok(())
 }

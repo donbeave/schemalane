@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand, ValueEnum};
 use crc32fast::Hasher;
 use regex::Regex;
 use sea_orm::sqlx;
@@ -7,12 +8,15 @@ use sea_orm::{
 use sea_orm_migration::SchemaManager;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use thiserror::Error;
+
+pub use schemalane_macros::embed_migrations;
 
 const DEFAULT_ADVISORY_LOCK_ID: i64 = 7_333_654_209_921_337;
 
@@ -142,6 +146,210 @@ pub struct AppliedMigration {
 pub struct RunReport {
     pub applied: Vec<AppliedMigration>,
     pub skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct InitReport {
+    pub root: PathBuf,
+    pub created: Vec<PathBuf>,
+    pub overwritten: Vec<PathBuf>,
+}
+
+pub fn init_migration_project(path: &Path, force: bool) -> Result<InitReport, SchemalaneError> {
+    if path.exists() {
+        if !path.is_dir() {
+            return Err(SchemalaneError::Validation(format!(
+                "init target exists and is not a directory: {}",
+                path.display()
+            )));
+        }
+
+        let has_entries = std::fs::read_dir(path)?.next().is_some();
+        if has_entries && !force {
+            return Err(SchemalaneError::Validation(format!(
+                "init target directory is not empty: {} (use --force to overwrite)",
+                path.display()
+            )));
+        }
+    } else {
+        std::fs::create_dir_all(path)?;
+    }
+
+    let package_name = sanitize_package_name(
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("migration"),
+    );
+    let lib_ident = package_to_lib_ident(&package_name);
+
+    let files = init_template_files(&package_name, &lib_ident);
+    let mut created = Vec::new();
+    let mut overwritten = Vec::new();
+
+    for (relative, content) in files {
+        let target = path.join(relative);
+        write_init_file(&target, &content, force, &mut created, &mut overwritten)?;
+    }
+
+    created.sort();
+    overwritten.sort();
+
+    Ok(InitReport {
+        root: path.to_path_buf(),
+        created,
+        overwritten,
+    })
+}
+
+pub struct EmbeddedRunner {
+    migrations_dir: &'static str,
+    build_migrator: fn(SchemalaneConfig) -> SchemalaneMigrator,
+}
+
+impl EmbeddedRunner {
+    pub fn new(
+        migrations_dir: &'static str,
+        build_migrator: fn(SchemalaneConfig) -> SchemalaneMigrator,
+    ) -> Self {
+        Self {
+            migrations_dir,
+            build_migrator,
+        }
+    }
+
+    pub async fn run(self) {
+        if let Err(err) = self.run_with(std::env::args_os()).await {
+            eprintln!("{err}");
+            std::process::exit(err.exit_code());
+        }
+    }
+
+    pub async fn run_with<I, T>(self, args: I) -> Result<(), SchemalaneError>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let cli = EmbeddedCli::parse_from(args);
+
+        let mut connect_opts = sea_orm::ConnectOptions::new(cli.database_url.clone());
+        connect_opts.max_connections(5);
+        connect_opts.min_connections(1);
+        let db = sea_orm::Database::connect(connect_opts).await?;
+
+        let migrations_dir = cli
+            .dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(self.migrations_dir));
+
+        let config = SchemalaneConfig {
+            schema: cli.schema,
+            history_table: cli.history_table,
+            migrations_dir,
+            installed_by: cli.installed_by,
+            ..Default::default()
+        };
+
+        let migrator = (self.build_migrator)(config);
+
+        match cli.command {
+            EmbeddedCommand::Up => {
+                let report = migrator.up(&db).await?;
+                println!(
+                    "Applied {} migration(s), skipped {}.",
+                    report.applied.len(),
+                    report.skipped
+                );
+                for applied in report.applied {
+                    println!(
+                        "- V{} {} ({}) [{} ms]",
+                        applied.version,
+                        applied.description,
+                        applied.script,
+                        applied.execution_time_ms
+                    );
+                }
+            }
+            EmbeddedCommand::Status {
+                format,
+                fail_on_pending,
+            } => {
+                let report = migrator.status(&db).await?;
+                match format {
+                    EmbeddedStatusFormat::Table => println!("{}", format_status_table(&report)),
+                    EmbeddedStatusFormat::Json => println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).map_err(|err| {
+                            SchemalaneError::Validation(format!("failed to encode JSON: {err}"))
+                        })?
+                    ),
+                }
+                if fail_on_pending {
+                    should_fail_on_pending(&report)?;
+                }
+            }
+            EmbeddedCommand::Fresh { yes } => {
+                let report = migrator.fresh(&db, yes).await?;
+                println!(
+                    "Fresh completed. Applied {} migration(s).",
+                    report.applied.len()
+                );
+                for applied in report.applied {
+                    println!(
+                        "- V{} {} ({}) [{} ms]",
+                        applied.version,
+                        applied.description,
+                        applied.script,
+                        applied.execution_time_ms
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Parser)]
+struct EmbeddedCli {
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: String,
+
+    #[arg(long, default_value = "public")]
+    schema: String,
+
+    #[arg(long, default_value = "flyway_schema_history")]
+    history_table: String,
+
+    #[arg(long)]
+    installed_by: Option<String>,
+
+    #[arg(long)]
+    dir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: EmbeddedCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum EmbeddedCommand {
+    Up,
+    Status {
+        #[arg(long, value_enum, default_value_t = EmbeddedStatusFormat::Table)]
+        format: EmbeddedStatusFormat,
+
+        #[arg(long)]
+        fail_on_pending: bool,
+    },
+    Fresh {
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EmbeddedStatusFormat {
+    Table,
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1074,6 +1282,94 @@ fn calculate_checksum(bytes: &[u8]) -> i32 {
     i32::from_be_bytes(hasher.finalize().to_be_bytes())
 }
 
+fn write_init_file(
+    path: &Path,
+    content: &str,
+    force: bool,
+    created: &mut Vec<PathBuf>,
+    overwritten: &mut Vec<PathBuf>,
+) -> Result<(), SchemalaneError> {
+    if path.exists() {
+        if !force {
+            return Err(SchemalaneError::Validation(format!(
+                "refusing to overwrite existing file: {} (use --force to overwrite)",
+                path.display()
+            )));
+        }
+        overwritten.push(path.to_path_buf());
+    } else {
+        created.push(path.to_path_buf());
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
+fn init_template_files(package_name: &str, lib_ident: &str) -> Vec<(PathBuf, String)> {
+    vec![
+        (
+            PathBuf::from("Cargo.toml"),
+            INIT_CARGO_TOML_TEMPLATE.replace("__PACKAGE_NAME__", package_name),
+        ),
+        (
+            PathBuf::from("README.md"),
+            INIT_PROJECT_README_TEMPLATE.to_owned(),
+        ),
+        (
+            PathBuf::from(".gitignore"),
+            INIT_GITIGNORE_TEMPLATE.to_owned(),
+        ),
+        (
+            PathBuf::from("src/main.rs"),
+            INIT_MAIN_RS_TEMPLATE
+                .replace("__PACKAGE_NAME__", package_name)
+                .replace("__LIB_IDENT__", lib_ident),
+        ),
+        (PathBuf::from("src/lib.rs"), INIT_LIB_RS_TEMPLATE.to_owned()),
+        (
+            PathBuf::from("migrations/V1__create_cake_table.sql"),
+            INIT_SQL_MIGRATION_TEMPLATE.to_owned(),
+        ),
+        (
+            PathBuf::from("migrations/V2__seed_cake_table.rs"),
+            INIT_RUST_MIGRATION_TEMPLATE.to_owned(),
+        ),
+    ]
+}
+
+fn sanitize_package_name(raw: &str) -> String {
+    let mut package = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            package.push(ch.to_ascii_lowercase());
+        } else {
+            package.push('_');
+        }
+    }
+
+    package = package.trim_matches(['-', '_']).to_owned();
+    if package.is_empty() {
+        package.push_str("migration");
+    }
+
+    if package
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        package = format!("m_{package}");
+    }
+
+    package
+}
+
+fn package_to_lib_ident(package_name: &str) -> String {
+    package_name.replace('-', "_")
+}
+
 fn normalize_script_key(script: String) -> String {
     Path::new(&script)
         .file_name()
@@ -1081,6 +1377,102 @@ fn normalize_script_key(script: String) -> String {
         .map(|name| name.to_owned())
         .unwrap_or(script)
 }
+
+const INIT_CARGO_TOML_TEMPLATE: &str = r#"[package]
+name = "__PACKAGE_NAME__"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+schemalane = "0.1"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
+
+# If schemalane is not published yet, replace the line above with:
+# schemalane = { path = "../schemalane" }
+
+[dependencies.sea-orm]
+version = "2.0.0-rc.34"
+default-features = false
+features = [
+    "runtime-tokio-rustls",
+    "sqlx-postgres",
+    "with-chrono",
+]
+
+[dependencies.sea-orm-migration]
+version = "2.0.0-rc.34"
+default-features = false
+features = [
+    "runtime-tokio-rustls",
+    "sqlx-postgres",
+]
+"#;
+
+const INIT_PROJECT_README_TEMPLATE: &str = r#"# Migration Crate
+
+Generated by `schemalane migrate init`.
+
+This crate runs Schemalane migrations programmatically and exposes a small CLI:
+
+- `up`
+- `status`
+- `fresh`
+
+Rust migration registration is automatic via `embed_migrations!("./migrations")`.
+
+Run from this crate:
+
+```sh
+cargo run -- --database-url "$DATABASE_URL" up
+```
+
+Run from parent project (SeaORM-style):
+
+```sh
+cargo run --manifest-path ./migration/Cargo.toml -- --database-url "$DATABASE_URL" up
+```
+"#;
+
+const INIT_GITIGNORE_TEMPLATE: &str = "/target\n";
+
+const INIT_MAIN_RS_TEMPLATE: &str = r#"use __LIB_IDENT__::embedded;
+
+#[tokio::main]
+async fn main() {
+    embedded::migrations::runner().run().await;
+}
+"#;
+
+const INIT_LIB_RS_TEMPLATE: &str = r#"pub mod embedded {
+    use schemalane::embed_migrations;
+
+    embed_migrations!("./migrations");
+}
+"#;
+
+const INIT_SQL_MIGRATION_TEMPLATE: &str = r#"CREATE TABLE cake (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+"#;
+
+const INIT_RUST_MIGRATION_TEMPLATE: &str = r##"use sea_orm::{ConnectionTrait, DbErr};
+use sea_orm_migration::SchemaManager;
+
+pub async fn migration(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    manager
+        .get_connection()
+        .execute_unprepared(
+            r#"
+INSERT INTO cake(name) VALUES ('vanilla');
+INSERT INTO cake(name) VALUES ('chocolate');
+"#,
+        )
+        .await?;
+    Ok(())
+}
+"##;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MigrationType {
@@ -1226,7 +1618,12 @@ pub fn migrations_dir_exists(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedVersion, parse_rust_filename, parse_sql_filename};
+    use super::{
+        ParsedVersion, SchemalaneError, init_migration_project, parse_rust_filename,
+        parse_sql_filename,
+    };
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn parses_sql_filename() {
@@ -1279,5 +1676,60 @@ mod tests {
         let v1 = ParsedVersion::parse("2.10").expect("parse");
         let v2 = ParsedVersion::parse("2.2").expect("parse");
         assert!(v1 > v2);
+    }
+
+    #[test]
+    fn init_scaffold_creates_expected_files() {
+        let temp = TempDir::new().expect("temp dir");
+        let target = temp.path().join("migration");
+
+        let report = init_migration_project(&target, false).expect("init should succeed");
+        assert!(!report.created.is_empty(), "should create scaffold files");
+        assert!(
+            target.join("Cargo.toml").exists(),
+            "Cargo.toml should be created"
+        );
+        assert!(
+            target.join("src/main.rs").exists(),
+            "main runner should be created"
+        );
+        assert!(
+            target.join("migrations/V1__create_cake_table.sql").exists(),
+            "sample SQL migration should be created"
+        );
+        assert!(
+            target.join("migrations/V2__seed_cake_table.rs").exists(),
+            "sample Rust migration should be created"
+        );
+        assert!(
+            !target.join("src/rust_migrations/mod.rs").exists(),
+            "scaffold should not require manual rust migration module lists"
+        );
+
+        let lib_source = fs::read_to_string(target.join("src/lib.rs")).expect("read src/lib.rs");
+        assert!(
+            lib_source.contains("embed_migrations!"),
+            "scaffold should use embed_migrations macro"
+        );
+    }
+
+    #[test]
+    fn init_scaffold_requires_force_for_non_empty_directory() {
+        let temp = TempDir::new().expect("temp dir");
+        let target = temp.path().join("migration");
+        fs::create_dir_all(&target).expect("create target");
+        fs::write(target.join("existing.txt"), "existing").expect("write marker");
+
+        let err = init_migration_project(&target, false).expect_err("expected validation failure");
+        assert!(
+            matches!(err, SchemalaneError::Validation(ref message) if message.contains("not empty")),
+            "expected non-empty directory validation error, got: {err}"
+        );
+
+        let report = init_migration_project(&target, true).expect("force init should succeed");
+        assert!(
+            !report.overwritten.is_empty() || !report.created.is_empty(),
+            "force init should write scaffold files"
+        );
     }
 }
