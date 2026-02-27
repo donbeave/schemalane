@@ -1,4 +1,4 @@
-use schemalane::{
+use schemalane_core::{
     MigrationState, RustMigrationExecutor, RustTransactionMode, SchemalaneConfig, SchemalaneError,
     SchemalaneMigrator,
 };

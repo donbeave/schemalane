@@ -66,7 +66,7 @@ pub fn embed_migrations(input: TokenStream) -> TokenStream {
         registration_tokens.push(quote! {
             migrator.register_rust_migration(
                 #script_lit,
-                ::schemalane::RustMigrationExecutor::new(|manager| {
+                ::schemalane_core::RustMigrationExecutor::new(|manager| {
                     Box::pin(#module_ident::migration(manager))
                 }),
             );
@@ -82,9 +82,9 @@ pub fn embed_migrations(input: TokenStream) -> TokenStream {
             pub const MIGRATIONS_DIR: &str = #migrations_dir_lit;
 
             pub fn build_migrator(
-                config: ::schemalane::SchemalaneConfig,
-            ) -> ::schemalane::SchemalaneMigrator {
-                let mut migrator = ::schemalane::SchemalaneMigrator::new(config);
+                config: ::schemalane_core::SchemalaneConfig,
+            ) -> ::schemalane_core::SchemalaneMigrator {
+                let mut migrator = ::schemalane_core::SchemalaneMigrator::new(config);
                 #(#registration_tokens)*
                 migrator
             }

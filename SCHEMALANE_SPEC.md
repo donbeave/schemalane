@@ -10,7 +10,7 @@ Schemalane v1 is a PostgreSQL-only, forward-only migration toolkit with a Flyway
   - SQL migrations (primary)
   - Rust migrations (for complex logic)
 - Usage modes:
-  - As a Rust crate
+  - As a Rust crate (via `schemalane-core`)
   - As an embedded tool in application binaries
   - As a CLI (via `schemalane-cli` crate)
   - As a programmatic migrator API

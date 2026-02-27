@@ -1,12 +1,12 @@
 [package]
 edition = "2024"
-name = "schemalane"
+name = "schemalane-core"
 publish = false
 rust-version = "1.85.0"
 version = "0.1.0"
 
 [lib]
-name = "schemalane"
+name = "schemalane_core"
 path = "src/lib.rs"
 
 [dependencies]

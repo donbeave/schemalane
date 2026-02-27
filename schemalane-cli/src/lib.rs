@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use schemalane::{
+use schemalane_core::{
     SchemalaneConfig, SchemalaneError, SchemalaneMigrator, format_status_table,
     init_migration_project, should_fail_on_pending,
 };

@@ -1232,12 +1232,12 @@ edition = "2024"
 publish = false
 
 [dependencies]
-schemalane = "0.1"
+schemalane-core = "0.1"
 schemalane-cli = "0.1"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
 
-# If schemalane is not published yet, replace the line above with:
-# schemalane = { path = "../schemalane" }
+# If schemalane-core is not published yet, replace the line above with:
+# schemalane-core = { path = "../schemalane-core" }
 # schemalane-cli = { path = "../schemalane-cli" }
 
 [dependencies.sea-orm]
@@ -1294,7 +1294,7 @@ async fn main() {
 "#;
 
 const INIT_LIB_RS_TEMPLATE: &str = r#"pub mod embedded {
-    use schemalane::embed_migrations;
+    use schemalane_core::embed_migrations;
 
     embed_migrations!("./migrations");
 }

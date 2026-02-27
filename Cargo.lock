@@ -2609,7 +2609,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "schemalane"
+name = "schemalane-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "schemalane-core",
+ "sea-orm",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "schemalane-core"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
@@ -2621,17 +2632,6 @@ dependencies = [
  "tempfile",
  "testcontainers-modules",
  "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "schemalane-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "schemalane",
- "sea-orm",
- "serde_json",
  "tokio",
 ]
 

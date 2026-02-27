@@ -5,7 +5,7 @@ PostgreSQL-first, forward-only migrations with SQL as default and optional Rust 
 Repository layout:
 
 - Cargo workspace root
-- library crate: `schemalane`
+- library crate: `schemalane-core`
 - CLI crate: `schemalane-cli`
 - proc-macro crate: `schemalane-macros`
 
