@@ -147,37 +147,35 @@ fn discover_rust_migrations(dir: &Path) -> Result<Vec<RustMigrationFile>, String
 }
 
 fn parse_rust_migration_filename(file_name: &str) -> Result<Vec<u64>, String> {
-    if !file_name.ends_with(".rs") {
+    if !std::path::Path::new(file_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
+    {
         return Err(format!(
-            "invalid Rust migration filename '{}': expected .rs extension",
-            file_name
+            "invalid Rust migration filename '{file_name}': expected .rs extension"
         ));
     }
 
     let stem = &file_name[..file_name.len() - 3];
     let Some(rest) = stem.strip_prefix('V') else {
         return Err(format!(
-            "invalid Rust migration filename '{}': expected V<version>__<description>.rs",
-            file_name
+            "invalid Rust migration filename '{file_name}': expected V<version>__<description>.rs"
         ));
     };
     let Some((version_text, description)) = rest.split_once("__") else {
         return Err(format!(
-            "invalid Rust migration filename '{}': expected V<version>__<description>.rs",
-            file_name
+            "invalid Rust migration filename '{file_name}': expected V<version>__<description>.rs"
         ));
     };
 
     if version_text.is_empty() {
         return Err(format!(
-            "invalid Rust migration filename '{}': missing version",
-            file_name
+            "invalid Rust migration filename '{file_name}': missing version"
         ));
     }
     if description.is_empty() {
         return Err(format!(
-            "invalid Rust migration filename '{}': missing description",
-            file_name
+            "invalid Rust migration filename '{file_name}': missing description"
         ));
     }
 
@@ -185,14 +183,12 @@ fn parse_rust_migration_filename(file_name: &str) -> Result<Vec<u64>, String> {
     for part in version_text.split(['.', '_']) {
         if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
             return Err(format!(
-                "invalid Rust migration filename '{}': invalid version '{}'",
-                file_name, version_text
+                "invalid Rust migration filename '{file_name}': invalid version '{version_text}'"
             ));
         }
         let number = part.parse::<u64>().map_err(|err| {
             format!(
-                "invalid Rust migration filename '{}': version parse error: {err}",
-                file_name
+                "invalid Rust migration filename '{file_name}': version parse error: {err}"
             )
         })?;
         version.push(number);
@@ -203,8 +199,7 @@ fn parse_rust_migration_filename(file_name: &str) -> Result<Vec<u64>, String> {
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
     {
         return Err(format!(
-            "invalid Rust migration filename '{}': invalid description '{}'",
-            file_name, description
+            "invalid Rust migration filename '{file_name}': invalid description '{description}'"
         ));
     }
 

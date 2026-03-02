@@ -77,7 +77,7 @@ pub enum SchemalaneError {
 }
 
 impl SchemalaneError {
-    pub fn exit_code(&self) -> i32 {
+    pub const fn exit_code(&self) -> i32 {
         match self {
             Self::Validation(_) => 2,
             Self::Drift(_) => 3,
@@ -241,7 +241,7 @@ impl RustMigrationExecutor {
         }
     }
 
-    fn transaction_mode(&self) -> RustTransactionMode {
+    const fn transaction_mode(&self) -> RustTransactionMode {
         self.transaction_mode
     }
 
@@ -263,7 +263,7 @@ impl SchemalaneMigrator {
         }
     }
 
-    pub fn config(&self) -> &SchemalaneConfig {
+    pub const fn config(&self) -> &SchemalaneConfig {
         &self.config
     }
 
@@ -275,6 +275,7 @@ impl SchemalaneMigrator {
             .insert(normalize_script_key(script.into()), migration);
     }
 
+    #[must_use]
     pub fn with_rust_migration<S>(mut self, script: S, migration: RustMigrationExecutor) -> Self
     where
         S: Into<String>,
@@ -283,6 +284,7 @@ impl SchemalaneMigrator {
         self
     }
 
+    #[must_use]
     pub fn with_rust_migrations<I, S>(mut self, migrations: I) -> Self
     where
         I: IntoIterator<Item = (S, RustMigrationExecutor)>,
@@ -295,14 +297,14 @@ impl SchemalaneMigrator {
     }
 
     pub async fn up(&self, db: &DatabaseConnection) -> Result<RunReport, SchemalaneError> {
-        self.ensure_postgres(db)?;
+        Self::ensure_postgres(db)?;
         let migrations = self.discover_migrations()?;
         self.ensure_rust_executors_registered(&migrations)?;
         self.with_advisory_lock(db, async {
             self.ensure_history_table(db).await?;
             let installed_by = self.resolve_installed_by(db).await?;
             let mut history = self.load_history(db).await?;
-            self.ensure_no_blocking_history(&migrations, &history)?;
+            Self::ensure_no_blocking_history(&migrations, &history)?;
 
             let mut report = RunReport::default();
             for migration in &migrations {
@@ -363,7 +365,7 @@ impl SchemalaneMigrator {
     }
 
     pub async fn status(&self, db: &DatabaseConnection) -> Result<StatusReport, SchemalaneError> {
-        self.ensure_postgres(db)?;
+        Self::ensure_postgres(db)?;
         let migrations = self.discover_migrations()?;
 
         let history = if self.history_table_exists(db).await? {
@@ -389,7 +391,7 @@ impl SchemalaneMigrator {
             return Err(SchemalaneError::FreshRequiresYes);
         }
 
-        self.ensure_postgres(db)?;
+        Self::ensure_postgres(db)?;
         let migrations = self.discover_migrations()?;
         self.ensure_rust_executors_registered(&migrations)?;
 
@@ -476,7 +478,7 @@ impl SchemalaneMigrator {
         }
     }
 
-    fn ensure_postgres(&self, db: &DatabaseConnection) -> Result<(), SchemalaneError> {
+    fn ensure_postgres(db: &DatabaseConnection) -> Result<(), SchemalaneError> {
         if db.get_database_backend() != DbBackend::Postgres {
             return Err(SchemalaneError::UnsupportedBackend);
         }
@@ -619,7 +621,6 @@ impl SchemalaneMigrator {
     }
 
     fn ensure_no_blocking_history(
-        &self,
         migrations: &[DiscoveredMigration],
         history: &[HistoryRow],
     ) -> Result<(), SchemalaneError> {
@@ -641,10 +642,10 @@ impl SchemalaneMigrator {
         }
 
         for migration in migrations {
-            if let Some(row) = latest.get(migration.script.as_str()) {
-                if row.success && row.checksum != migration.checksum {
-                    checksum_mismatch.push(migration.script.clone());
-                }
+            if let Some(row) = latest.get(migration.script.as_str())
+                && row.success && row.checksum != migration.checksum
+            {
+                checksum_mismatch.push(migration.script.clone());
             }
         }
 
@@ -1001,7 +1002,7 @@ async fn execute_rust_migration(
             let txn_manager = SchemaManager::new(&txn);
 
             match migration.up(&txn_manager).await {
-                Ok(_) => txn.commit().await,
+                Ok(()) => txn.commit().await,
                 Err(err) => {
                     let _ = txn.rollback().await;
                     Err(err)
@@ -1017,7 +1018,7 @@ fn is_applied_success(migration: &DiscoveredMigration, history: &[HistoryRow]) -
         .is_some_and(|row| row.success && row.checksum == migration.checksum)
 }
 
-fn latest_history_by_script<'a>(history: &'a [HistoryRow]) -> HashMap<&'a str, &'a HistoryRow> {
+fn latest_history_by_script(history: &[HistoryRow]) -> HashMap<&str, &HistoryRow> {
     let mut latest = HashMap::new();
     for row in history {
         latest.insert(row.script.as_str(), row);
@@ -1028,8 +1029,7 @@ fn latest_history_by_script<'a>(history: &'a [HistoryRow]) -> HashMap<&'a str, &
 fn parse_sql_filename(file_name: &str) -> Result<(String, ParsedVersion, String), SchemalaneError> {
     let captures = sql_migration_regex().captures(file_name).ok_or_else(|| {
         SchemalaneError::Validation(format!(
-            "invalid SQL migration filename '{}': expected V<version>__<description>.sql",
-            file_name
+            "invalid SQL migration filename '{file_name}': expected V<version>__<description>.sql"
         ))
     })?;
 
@@ -1054,8 +1054,7 @@ fn parse_rust_filename(
 ) -> Result<(String, ParsedVersion, String), SchemalaneError> {
     let captures = rust_migration_regex().captures(file_name).ok_or_else(|| {
         SchemalaneError::Validation(format!(
-            "invalid Rust migration filename '{}': expected V<version>__<description>.rs",
-            file_name
+            "invalid Rust migration filename '{file_name}': expected V<version>__<description>.rs"
         ))
     })?;
 
@@ -1080,12 +1079,12 @@ fn validate_version(version: &str) -> Result<(), SchemalaneError> {
         Ok(())
     } else {
         Err(SchemalaneError::Validation(format!(
-            "invalid version '{}': expected ^[0-9]+([._][0-9]+)*$",
-            version
+            "invalid version '{version}': expected ^[0-9]+([._][0-9]+)*$"
         )))
     }
 }
 
+#[expect(clippy::expect_used, reason = "regex is a compile-time constant")]
 fn sql_migration_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -1094,6 +1093,7 @@ fn sql_migration_regex() -> &'static Regex {
     })
 }
 
+#[expect(clippy::expect_used, reason = "regex is a compile-time constant")]
 fn rust_migration_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -1102,6 +1102,7 @@ fn rust_migration_regex() -> &'static Regex {
     })
 }
 
+#[expect(clippy::expect_used, reason = "regex is a compile-time constant")]
 fn version_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| Regex::new(r"^[0-9]+([._][0-9]+)*$").expect("valid version regex"))
@@ -1115,7 +1116,8 @@ fn qualified_table(schema: &str, table: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(table))
 }
 
-fn millis_i32(millis: u128) -> i32 {
+#[expect(clippy::cast_possible_truncation, reason = "guarded by the preceding bounds check")]
+const fn millis_i32(millis: u128) -> i32 {
     if millis > i32::MAX as u128 {
         i32::MAX
     } else {
@@ -1221,7 +1223,7 @@ fn normalize_script_key(script: String) -> String {
     Path::new(&script)
         .file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.to_owned())
+        .map(ToOwned::to_owned)
         .unwrap_or(script)
 }
 
@@ -1285,13 +1287,13 @@ cargo run --manifest-path ./migration/Cargo.toml -- --database-url "$DATABASE_UR
 
 const INIT_GITIGNORE_TEMPLATE: &str = "/target\n";
 
-const INIT_MAIN_RS_TEMPLATE: &str = r#"use __LIB_IDENT__::embedded;
+const INIT_MAIN_RS_TEMPLATE: &str = r"use __LIB_IDENT__::embedded;
 
 #[tokio::main]
 async fn main() {
     embedded::migrations::runner().run().await;
 }
-"#;
+";
 
 const INIT_LIB_RS_TEMPLATE: &str = r#"pub mod embedded {
     use schemalane_core::embed_migrations;
@@ -1300,11 +1302,11 @@ const INIT_LIB_RS_TEMPLATE: &str = r#"pub mod embedded {
 }
 "#;
 
-const INIT_SQL_MIGRATION_TEMPLATE: &str = r#"CREATE TABLE cake (
+const INIT_SQL_MIGRATION_TEMPLATE: &str = r"CREATE TABLE cake (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL
 );
-"#;
+";
 
 const INIT_RUST_MIGRATION_TEMPLATE: &str = r##"use sea_orm::{ConnectionTrait, DbErr};
 use sea_orm_migration::SchemaManager;
@@ -1330,7 +1332,7 @@ enum MigrationType {
 }
 
 impl MigrationType {
-    fn as_history_type(self) -> &'static str {
+    const fn as_history_type(self) -> &'static str {
         match self {
             Self::Sql => "SQL",
             Self::Rust => "RUST",
@@ -1399,7 +1401,7 @@ impl ParsedVersion {
         let mut segments = Vec::new();
         for part in value.split(['.', '_']) {
             let number = part.parse::<u64>().map_err(|_| {
-                SchemalaneError::Validation(format!("invalid version segment '{}'", part))
+                SchemalaneError::Validation(format!("invalid version segment '{part}'"))
             })?;
             segments.push(number);
         }
@@ -1431,12 +1433,10 @@ pub fn format_status_table(report: &StatusReport) -> String {
             migration.state,
             migration
                 .installed_rank
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
+                .map_or_else(|| "-".to_owned(), |v| v.to_string()),
             migration
                 .execution_time_ms
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
+                .map_or_else(|| "-".to_owned(), |v| v.to_string()),
         ));
     }
 
@@ -1453,7 +1453,7 @@ pub fn format_status_table(report: &StatusReport) -> String {
     lines.join("\n")
 }
 
-pub fn should_fail_on_pending(report: &StatusReport) -> Result<(), SchemalaneError> {
+pub const fn should_fail_on_pending(report: &StatusReport) -> Result<(), SchemalaneError> {
     if report.summary.pending > 0 {
         Err(SchemalaneError::PendingMigrations(report.summary.pending))
     } else {

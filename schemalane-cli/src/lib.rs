@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout, clippy::print_stderr, clippy::future_not_send)]
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use schemalane_core::{
     SchemalaneConfig, SchemalaneError, SchemalaneMigrator, format_status_table,
@@ -251,10 +253,10 @@ async fn run_root_cli(cli: Cli) -> Result<(), SchemalaneError> {
                     &schema,
                     &history_table,
                     installed_by.as_deref(),
-                    command,
+                    &command,
                 );
             }
-            if migration_dir != PathBuf::from(DEFAULT_MIGRATION_DIR) {
+            if migration_dir != Path::new(DEFAULT_MIGRATION_DIR) {
                 return Err(SchemalaneError::Validation(format!(
                     "migration crate manifest not found: {}",
                     manifest_path.display()
@@ -304,7 +306,7 @@ fn run_via_migration_crate(
     schema: &str,
     history_table: &str,
     installed_by: Option<&str>,
-    command: MigrateCommand,
+    command: &MigrateCommand,
 ) -> Result<(), SchemalaneError> {
     let mut cargo = Command::new("cargo");
     cargo
@@ -341,13 +343,13 @@ fn run_via_migration_crate(
                 StatusFormat::Table => "table",
                 StatusFormat::Json => "json",
             });
-            if fail_on_pending {
+            if *fail_on_pending {
                 cargo.arg("--fail-on-pending");
             }
         }
         MigrateCommand::Fresh { yes } => {
             cargo.arg("fresh");
-            if yes {
+            if *yes {
                 cargo.arg("--yes");
             }
         }
